@@ -18,6 +18,7 @@ use eventually_core::subscription::EventStream;
 use serde::Deserialize;
 
 use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
 
 use tokio_postgres::AsyncMessage;
 
@@ -56,8 +57,8 @@ pub struct EventSubscriber<Id, Event> {
 
 impl<Id, Event> EventSubscriber<Id, Event>
 where
-    Id: TryFrom<String> + Debug + Send + Sync + 'static,
-    Event: Debug + Send + Sync + 'static,
+    Id: TryFrom<String> + Debug + Send + Sync + 'static + Clone,
+    Event: Debug + Send + Sync + 'static + Clone,
     for<'de> Id: Deserialize<'de>,
     for<'de> Event: Deserialize<'de>,
     <Id as TryFrom<String>>::Error: std::error::Error + Send + Sync + 'static,
@@ -123,8 +124,8 @@ where
 
 impl<Id, Event> eventually_core::subscription::EventSubscriber for EventSubscriber<Id, Event>
 where
-    Id: Eq + Send + Sync + Clone,
-    Event: Send + Sync + Clone,
+    Id: Eq + Send + Sync + Clone + 'static,
+    Event: Send + Sync + Clone + 'static,
 {
     type SourceId = Id;
     type Event = Event;
@@ -132,10 +133,7 @@ where
 
     fn subscribe_all(&self) -> BoxFuture<Result<EventStream<Self>>> {
         Box::pin(async move {
-            Ok(self
-                .tx
-                .subscribe()
-                .into_stream()
+            Ok(BroadcastStream::new(self.tx.subscribe())
                 .filter_map(|r| async { r.ok() })
                 .boxed())
         })
@@ -155,7 +153,7 @@ struct NotificationPayload<Event> {
 
 impl<SourceId, Event> TryFrom<NotificationPayload<Event>> for Persisted<SourceId, Event>
 where
-    SourceId: TryFrom<String>,
+    SourceId: TryFrom<String> + 'static,
     <SourceId as TryFrom<String>>::Error: std::error::Error + Send + Sync + 'static,
 {
     type Error = SubscriberError;

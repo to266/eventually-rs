@@ -4,7 +4,8 @@ use envconfig::Envconfig;
 
 use eventually_app_example::config::Config;
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> anyhow::Result<()> {
     let config = Config::init()?;
-    smol::run(eventually_app_example::run(config))
+    eventually_app_example::run(config).await
 }

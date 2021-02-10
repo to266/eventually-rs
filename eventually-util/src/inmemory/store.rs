@@ -17,7 +17,8 @@ use futures::stream::{empty, iter, StreamExt, TryStreamExt};
 
 use parking_lot::RwLock;
 
-use tokio::sync::broadcast::{channel, RecvError, Sender};
+use tokio::sync::broadcast::{channel, Sender};
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 #[cfg(feature = "with-tracing")]
 use tracing_futures::Instrument;
@@ -49,8 +50,14 @@ impl AppendError for ConflictError {
 /// [`EventStream`]: ../../eventually-core/subscription/type.EventStream.html
 /// [`subscribe_all`]: struct.EventSubscriber.html#method.subscribe_all
 #[derive(Debug, thiserror::Error)]
-#[error("failed to read event from subscription watch channel: {0}")]
-pub struct SubscriberError(#[from] RecvError);
+#[error("failed to read event from subscription")]
+pub struct SubscriberError(BroadcastStreamRecvError);
+
+impl From<BroadcastStreamRecvError> for SubscriberError {
+    fn from(e: BroadcastStreamRecvError) -> Self {
+        Self(e)
+    }
+}
 
 /// Builder for [`EventStore`] instances.
 ///
@@ -65,7 +72,8 @@ impl EventStoreBuilder {
     pub fn for_aggregate<T>(_: &T) -> EventStore<T::Id, T::Event>
     where
         T: Aggregate,
-        T::Id: Hash + Eq,
+        T::Id: Hash + Eq + Clone,
+        T::Event: Clone,
     {
         Default::default()
     }
@@ -87,7 +95,8 @@ where
 
 impl<Id, Event> EventStore<Id, Event>
 where
-    Id: Hash + Eq,
+    Id: Hash + Eq + Clone,
+    Event: Clone,
 {
     /// Creates a new EventStore with a specified in-memory broadcast channel
     /// size, which will used by the [`subscribe_all`] method to notify
@@ -110,7 +119,8 @@ where
 
 impl<Id, Event> Default for EventStore<Id, Event>
 where
-    Id: Hash + Eq,
+    Id: Hash + Eq + Clone,
+    Event: Clone,
 {
     #[inline]
     fn default() -> Self {
@@ -120,8 +130,8 @@ where
 
 impl<Id, Event> EventSubscriber for EventStore<Id, Event>
 where
-    Id: Hash + Eq + Sync + Send + Clone,
-    Event: Sync + Send + Clone,
+    Id: Hash + Eq + Sync + Send + Clone + 'static,
+    Event: Sync + Send + Clone + 'static,
 {
     type SourceId = Id;
     type Event = Event;
@@ -136,7 +146,7 @@ where
         // with the definition of the EventStream.
         let rx = self.tx.subscribe();
 
-        Box::pin(async move { Ok(rx.into_stream().map_err(SubscriberError).boxed()) })
+        Box::pin(async move { Ok(BroadcastStream::new(rx).map_err(SubscriberError).boxed()) })
     }
 }
 
